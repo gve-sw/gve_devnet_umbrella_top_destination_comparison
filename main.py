@@ -51,11 +51,12 @@ rights not expressly granted are reserved.
 import os.path
 from pathlib import Path
 from utils import get_top_million, create_aws_credentials, create_aws_config, sync_s3_bucket, \
-    walk_dir_and_compare_top_million, convert_set_to_csv_file
+    walk_dir_and_compare_top_million, convert_set_to_csv_file, valid_date, dir_path, valid_file
 import pandas as pd
+import datetime
+from argparse import ArgumentParser
 
 if __name__ == "__main__":
-
     """
     VARIABLES
     
@@ -63,18 +64,56 @@ if __name__ == "__main__":
     :final_directory_path: string
     :locally_synced_directory_name: string
     :top_million_url: string
+    :daterange_start (optional): string 
+    :daterange_end (optional): string
     """
+
+    parser = ArgumentParser()
+
+    parser.add_argument("-sd", "--start_date", dest="start_date", type=valid_date,
+                        help="The start date (YYYY-MM-DD) of the DNS Logs to compare.",
+                        default=None)
+
+    parser.add_argument("-ed", "--end_date", dest="end_date", type=valid_date,
+                        help="The end date (YYYY-MM-DD) of the DNS Logs to compare.",
+                        default=None)
+
+    parser.add_argument("-d", "--path", dest="path", type=dir_path,
+                        help="The output directory path.",
+                        default=Path.home())
+
+    parser.add_argument("-f", "--filename", dest="filename", type=valid_file,
+                        help="The filename of the outputted file.",
+                        default="flagged_umbrella_domains.csv")
+
+    args = parser.parse_args()
+
+    # Start of the date range of the logs to compare (yyyy-mm-dd)
+    if args.start_date is not None:
+        daterange_start = str(args.start_date)
+    else:
+        daterange_start = args.start_date
+
+    # End of the date range of the logs to compare (yyyy-mm-dd)
+    if args.end_date is not None:
+        daterange_end = str(args.end_date)
+    else:
+        daterange_end = args.end_date
+
+    if daterange_start is not None:
+        if daterange_end is None:
+            daterange_end = datetime.datetime.today().strftime('%Y-%m-%d')
+
     # The name of the file returned after the program finishes
-    final_csv_filename = "flagged_umbrella_domains.csv"
+    final_csv_filename = args.filename
 
     # Points to home directory (windows: C:/, OSX/Linux: ~/)
-    final_directory_path = str(Path.home())
+    final_directory_path = str(args.path)
 
     # Locally synced directory name ('dnslogs' by default)
     locally_synced_directory_name = "dnslogs"
 
     top_million_url = "http://s3-us-west-1.amazonaws.com/umbrella-static/top-1m.csv.zip"
-
 
     """
     This program has the following workflow:
@@ -101,10 +140,11 @@ if __name__ == "__main__":
     # Syncs your umbrella account's AWS datapath to a local directory.
     sync_s3_bucket()
 
-    # Walk the locally synced directory and compare domains to Umbrella's top million and return a set of flagged domains
+    # Walk the locally synced directory and compare domains to Umbrella's top million, returns a set of flagged domains
     final_domain_set = walk_dir_and_compare_top_million(directory_path=locally_synced_directory_name,
-                                                        top_million_df=top_million_df)
-
+                                                        top_million_df=top_million_df,
+                                                        daterange_start=daterange_start,
+                                                        daterange_end=daterange_end)
 
     # Creates a CSV file of the flagged domains at the given filepath: final_directory_path+final_csv_filename
     convert_set_to_csv_file(s=final_domain_set, filepath=os.path.join(final_directory_path, final_csv_filename))

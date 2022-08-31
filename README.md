@@ -42,6 +42,7 @@ This project requires the following setup:
 ```python
 # Add Datapath to the AWS S3 Bucket for Umbrela logs
 DATA_PATH=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# Add the Access Key for the AWS S3 Bucket
 ACCESS_KEY=XXXXXXXXXXXXXXXXXXXX
 # Add the Secret Key for the AWS S3 Bucket
 SECRET_KEY=XXXXXXXXXXXXXXXXXXXX
@@ -52,7 +53,20 @@ SECRET_KEY=XXXXXXXXXXXXXXXXXXXX
 ## Usage
 To run this script run the following command:
 
-``` python main.py```
+   ``` python main.py```
+
+Optional arguments:
+
+     -h, --help            show this help message and exit
+     -sd START_DATE, --start_date START_DATE
+                           The start date (YYYY-MM-DD) of the DNS Logs to compare.
+     -ed END_DATE, --end_date END_DATE
+                           The end date (YYYY-MM-DD) of the DNS Logs to compare.
+     -d PATH, --path PATH  The output directory path.
+     -f FILENAME, --filename FILENAME
+                           The filename of the outputted file.
+   
+
 
 
 # Screenshots

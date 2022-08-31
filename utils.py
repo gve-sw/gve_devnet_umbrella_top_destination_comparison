@@ -56,6 +56,8 @@ import re
 import subprocess
 import pandas as pd
 import requests
+import datetime
+import argparse
 
 load_dotenv()
 # Credentials found in .env file
@@ -155,19 +157,40 @@ def sync_s3_bucket(datapath=datapath):
     subprocess.run(['aws', 's3', 'sync', f"s3://{datapath}", '.'])
 
 
-def walkdir(dirname):
+def walkdir(dirname, daterange_start=None, daterange_end=None):
     """
-    Walks through each directory in the given directory filepath (dirname) and
-    yields a Pandas dataframe of the csv files found in each directory
+    Walks through each directory in the given directory filepath (dirname) and between the given daterange.
+    If no date range is given, all dates in DNS logs will be compared.
+    If only the start date is given, the end date will be today's current date.
+
+    yields a Pandas dataframe of the csv files found in each directory.
 
     Parameters
     ----------
     dirname: Path to the directory containing Umbrella dnslogs: string
+    daterange_start: start date for range of dates for DNS Logs (yyyy-mm-dd): string
+    daterange_end: end date for range of dates for DNS Logs (yyyy-mm-dd): string
 
     Returns
     -------
+    generator function
 
+    Nick (Smart-Home)
     """
+    if daterange_start is not None:
+        # If daterange_start is given
+        daterange_start = datetime.datetime.strptime(daterange_start, "%Y-%m-%d")
+        if daterange_end is not None:
+            # If daterange_start and daterange_end is given
+            daterange_end = datetime.datetime.strptime(daterange_end, "%Y-%m-%d")
+        else:
+            # If daterange_start is given, but daterange_end is not given, set daterange_end to the current date
+            daterange_end = datetime.datetime.today().strftime('%Y-%m-%d')
+            daterange_end = datetime.datetime.strptime(daterange_end, "%Y-%m-%d")
+
+    elif daterange_end is not None:
+        daterange_end = datetime.datetime.strptime(daterange_end, "%Y-%m-%d")
+
     for cur, _dirs, files in os.walk(dirname):
         pref = ''
         head, tail = os.path.split(cur)
@@ -177,9 +200,25 @@ def walkdir(dirname):
         print(pref + tail)
         for f in files:
             if ".DS_Store" not in f:
-                print(tail + '---' + f)
-                dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
-                yield dnslog
+                if daterange_start is None and daterange_end is None:
+                    # If no date range is given, compare to all dates
+                    print(tail + '---' + f)
+                    dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
+                    yield dnslog
+                elif daterange_start is None and daterange_end is not None:
+                    # If ONLY a daterange_end is given, compare to all files on or before that date
+                    current_folder_daterange = datetime.datetime.strptime(tail, "%Y-%m-%d")
+                    if current_folder_daterange <= daterange_end:
+                        print(tail + '---' + f)
+                        dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
+                        yield dnslog
+                else:
+                    # If a daterange_start is given compare to all dates within the daterange
+                    current_folder_daterange = datetime.datetime.strptime(tail, "%Y-%m-%d")
+                    if daterange_start <= current_folder_daterange <= daterange_end:
+                        print(tail + '---' + f)
+                        dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
+                        yield dnslog
 
 
 def compare_columns(local_df, top_df):
@@ -207,7 +246,7 @@ def compare_columns(local_df, top_df):
     return non_matched_domains
 
 
-def walk_dir_and_compare_top_million(directory_path, top_million_df):
+def walk_dir_and_compare_top_million(directory_path, top_million_df, daterange_start=None, daterange_end=None):
     """
     Walks the directory found at "directory_path" and compares all DNS log CSV files
     found within subsequent directories. Returns a set of all domains that did not match
@@ -217,6 +256,7 @@ def walk_dir_and_compare_top_million(directory_path, top_million_df):
     ----------
     directory_path
     top_million_df
+    daterange
 
     Returns
     -------
@@ -225,7 +265,7 @@ def walk_dir_and_compare_top_million(directory_path, top_million_df):
 
     """
     domain_set = set()
-    for csv in walkdir(directory_path):
+    for csv in walkdir(directory_path, daterange_start=daterange_start, daterange_end=daterange_end):
         domains = compare_columns(csv, top_million_df)
         domain_set.update(domains)
 
@@ -249,3 +289,34 @@ def convert_set_to_csv_file(s, filepath):
     s = list(s)
     df = pd.DataFrame(s)
     df.to_csv(filepath)
+
+
+def valid_date(s):
+    """
+    validates date of argparse argument dates
+    """
+    try:
+        return datetime.datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        msg = "not a valid date: {0!r}".format(s)
+        raise argparse.ArgumentTypeError(msg)
+
+
+def dir_path(path):
+    """
+    validates directory path of argparse argument directory path
+    """
+    if os.path.isdir(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"readable_dir:{path} is not a valid path")
+
+
+def valid_file(param):
+    """
+    validates filename is .csv for argparse argument filename
+    """
+    base, ext = os.path.splitext(param)
+    if ext.lower() != '.csv':
+        raise argparse.ArgumentTypeError('File must have a csv extension')
+    return param
