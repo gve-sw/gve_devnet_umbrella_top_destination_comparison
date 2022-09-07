@@ -51,10 +51,12 @@ rights not expressly granted are reserved.
 import os.path
 from pathlib import Path
 from utils import get_top_million, create_aws_credentials, create_aws_config, sync_s3_bucket, \
-    walk_dir_and_compare_top_million, convert_set_to_csv_file, valid_date, dir_path, valid_file
+    file_processor, convert_set_to_csv_file, valid_date, dir_path, valid_file, bcolors, walkdir
 import pandas as pd
 import datetime
 from argparse import ArgumentParser
+import multiprocessing as mp
+from alive_progress import alive_bar
 
 if __name__ == "__main__":
     """
@@ -104,6 +106,8 @@ if __name__ == "__main__":
         if daterange_end is None:
             daterange_end = datetime.datetime.today().strftime('%Y-%m-%d')
 
+
+
     # The name of the file returned after the program finishes
     final_csv_filename = args.filename
 
@@ -140,11 +144,41 @@ if __name__ == "__main__":
     # Syncs your umbrella account's AWS datapath to a local directory.
     sync_s3_bucket()
 
-    # Walk the locally synced directory and compare domains to Umbrella's top million, returns a set of flagged domains
-    final_domain_set = walk_dir_and_compare_top_million(directory_path=locally_synced_directory_name,
-                                                        top_million_df=top_million_df,
-                                                        daterange_start=daterange_start,
-                                                        daterange_end=daterange_end)
+    # Create Multiprocessing pool
+    p = mp.Pool()
+
+    # Pass filenames from locally_synced_directory_name and parse them.
+    # results is a list of parsed domains per file.
+    results = p.map(file_processor, walkdir(locally_synced_directory_name, daterange_start=daterange_start, daterange_end=daterange_end))
+
+    #Close the pool
+    p.close()
+
+    if len(results) == 0:
+        print(f"{bcolors.FAIL}Found no available files within the date-range: {bcolors.WARNING}{daterange_start} - {daterange_end}{bcolors.ENDC}")
+        exit()
+
+    # Create and build Dictionary of domains found in Umbrella's top 1 million.
+    hashtable = {}
+    with alive_bar(len(top_million_df.values), title=f"{bcolors.WARNING}Verifying Top 1 Million Domains{bcolors.ENDC}",
+                   dual_line=True, ) as bar:
+        for value in top_million_df.iloc[:, 1]:
+            bar.text = f'{bcolors.WARNING}-> {bcolors.ENDC}Current Domain: {bcolors.WARNING}{value}{bcolors.ENDC}'
+            hashtable[value] = True
+            bar()
+
+    # Create set to hold flagged unique domains
+    flagged_domains = set()
+    # Iterate through parsed domains and flag domains not found in Umbrella Top 1 Million Dictionary
+    with alive_bar(len(results), dual_line=True, title=f"{bcolors.WARNING}Performing Comparisons{bcolors.ENDC}") as bar:
+        for file in results:
+            for domain in file:
+                try:
+                    value = hashtable[domain]
+                except (KeyError, TypeError):
+                    flagged_domains.add(domain)
+            bar()
 
     # Creates a CSV file of the flagged domains at the given filepath: final_directory_path+final_csv_filename
-    convert_set_to_csv_file(s=final_domain_set, filepath=os.path.join(final_directory_path, final_csv_filename))
+    convert_set_to_csv_file(s=flagged_domains, filepath=os.path.join(final_directory_path, final_csv_filename))
+    print(f"{bcolors.BOLD}File Created at: {bcolors.HEADER}{os.path.join(final_directory_path, final_csv_filename)}{bcolors.ENDC}")

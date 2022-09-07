@@ -50,6 +50,8 @@ rights not expressly granted are reserved.
 
 import os
 import os.path
+import time
+
 from dotenv import load_dotenv
 from pathlib import Path
 import re
@@ -58,6 +60,8 @@ import pandas as pd
 import requests
 import datetime
 import argparse
+import multiprocessing as mp
+from alive_progress import alive_bar
 
 load_dotenv()
 # Credentials found in .env file
@@ -70,7 +74,21 @@ if datapath:
     region = re.search(region_regex, datapath)
     if region:
         region = region.group(1)
-        print(f"AWS Region: {region}")
+        print(f"AWS Region: {region}", end="\r")
+
+
+
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 
 # Download the Umbrella top 1 million destinations to home directory, unzip file,
@@ -175,7 +193,6 @@ def walkdir(dirname, daterange_start=None, daterange_end=None):
     -------
     generator function
 
-    Nick (Smart-Home)
     """
     if daterange_start is not None:
         # If daterange_start is given
@@ -191,85 +208,65 @@ def walkdir(dirname, daterange_start=None, daterange_end=None):
     elif daterange_end is not None:
         daterange_end = datetime.datetime.strptime(daterange_end, "%Y-%m-%d")
 
-    for cur, _dirs, files in os.walk(dirname):
-        pref = ''
-        head, tail = os.path.split(cur)
-        while head:
-            pref += '---'
-            head, _tail = os.path.split(head)
-        print(pref + tail)
-        for f in files:
-            if ".DS_Store" not in f:
-                if daterange_start is None and daterange_end is None:
-                    # If no date range is given, compare to all dates
-                    print(tail + '---' + f)
-                    dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
-                    yield dnslog
-                elif daterange_start is None and daterange_end is not None:
-                    # If ONLY a daterange_end is given, compare to all files on or before that date
-                    current_folder_daterange = datetime.datetime.strptime(tail, "%Y-%m-%d")
-                    if current_folder_daterange <= daterange_end:
-                        print(tail + '---' + f)
-                        dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
+    with alive_bar(sum(os.path.isdir(i) for i in os.listdir(dirname)), dual_line=True, title=f"{bcolors.WARNING}Walking Directory: {dirname} {bcolors.ENDC}") as bar:
+        for cur, _dirs, files in os.walk(dirname):
+            pref = ''
+            head, tail = os.path.split(cur)
+            bar.text = f'{bcolors.WARNING}-> {bcolors.ENDC}Current Directory: {bcolors.WARNING}{tail}{bcolors.ENDC}'
+            while head:
+                pref += '---'
+                head, _tail = os.path.split(head)
+            # print(pref + tail)
+            for f in files:
+                if ".DS_Store" not in f:
+                    if daterange_start is None and daterange_end is None:
+                        # If no date range is given, compare to all dates
+                        # print(tail + '---' + f)
+                        dnslog = f"{dirname}/{tail}/{f}"
                         yield dnslog
-                else:
-                    # If a daterange_start is given compare to all dates within the daterange
-                    current_folder_daterange = datetime.datetime.strptime(tail, "%Y-%m-%d")
-                    if daterange_start <= current_folder_daterange <= daterange_end:
-                        print(tail + '---' + f)
-                        dnslog = pd.read_csv(f"{dirname}/{tail}/{f}", header=None)
-                        yield dnslog
+                    elif daterange_start is None and daterange_end is not None:
+                        # If ONLY a daterange_end is given, compare to all files on or before that date
+                        current_folder_daterange = datetime.datetime.strptime(tail, "%Y-%m-%d")
+                        if current_folder_daterange <= daterange_end:
+                            # print(tail + '---' + f)
+                            dnslog = f"{dirname}/{tail}/{f}"
+                            yield dnslog
+                    else:
+                        # If a daterange_start is given compare to all dates within the daterange
+                        current_folder_daterange = datetime.datetime.strptime(tail, "%Y-%m-%d")
+                        if daterange_start <= current_folder_daterange <= daterange_end:
+                            # print(tail + '---' + f)
+                            dnslog = f"{dirname}/{tail}/{f}"
+                            yield dnslog
+            bar()
 
 
-def compare_columns(local_df, top_df):
+def file_processor(filepath):
     """
-    Compares the local_df's domains to Umbrella's top million domains and
-    returns local domains that have not been found in Umbrella's top million domain dataframe.
+    Processes csv files and returns a list of domains found within the csv file
 
     Parameters
     ----------
-    local_df: The pandas dataframe of the local DNS logs csv file: string
-    top_df: The pandas dataframe of Umbrella's top million csv file: string
+    filepath: The filepath of the file to be parsed
+
 
     Returns
     -------
-    non_matched_domains: set
+    domains: list[list]
 
     """
-    non_matched_domains = set()
+    print(f"{bcolors.OKBLUE}{mp.current_process().name}: {bcolors.OKCYAN}Processing {bcolors.UNDERLINE}{filepath}{bcolors.ENDC}", end="\r")
+    # Process data
+    domains = list()
+    local_df = pd.read_csv(filepath, header=None)
     for domain in local_df.iloc[:, 8]:
         if "." == domain[-1]:
             domain = domain[:-1]
-        if domain not in top_df.values:
-            non_matched_domains.add(domain)
 
-    return non_matched_domains
+        domains.append(domain)
 
+    return domains
 
-def walk_dir_and_compare_top_million(directory_path, top_million_df, daterange_start=None, daterange_end=None):
-    """
-    Walks the directory found at "directory_path" and compares all DNS log CSV files
-    found within subsequent directories. Returns a set of all domains that did not match
-    with Umbrella's top million DNS domains.
-
-    Parameters
-    ----------
-    directory_path
-    top_million_df
-    daterange
-
-    Returns
-    -------
-    domain_set: set
-
-
-    """
-    domain_set = set()
-    for csv in walkdir(directory_path, daterange_start=daterange_start, daterange_end=daterange_end):
-        domains = compare_columns(csv, top_million_df)
-        domain_set.update(domains)
-
-    return domain_set
 
 
 def convert_set_to_csv_file(s, filepath):
@@ -288,7 +285,7 @@ def convert_set_to_csv_file(s, filepath):
     """
     s = list(s)
     df = pd.DataFrame(s)
-    df.to_csv(filepath)
+    df.to_csv(filepath, header=None)
 
 
 def valid_date(s):
@@ -296,7 +293,7 @@ def valid_date(s):
     validates date of argparse argument dates
     """
     try:
-        return datetime.datetime.strptime(s, "%Y-%m-%d")
+        return datetime.datetime.strptime(s, "%Y-%m-%d").date()
     except ValueError:
         msg = "not a valid date: {0!r}".format(s)
         raise argparse.ArgumentTypeError(msg)
